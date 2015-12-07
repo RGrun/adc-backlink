@@ -1,0 +1,311 @@
+<?php
+
+# tell drupal about field type
+function adc_backlink_field_info() {
+
+	return array (
+
+		'adc_select_select' => array(
+			'label' => t('ADC Select Backlinks Field'),
+			'description' => t('ADC\'s custom select field for backlinks'),
+			'default_widget' => 'adc_select_select_widget',
+			'default_formatter' => 'adc_select_select_formatter',
+			),
+		);
+}
+
+# This function allows the widget to be displayed in the field list
+function adc_backlink_field_widget_info() {
+
+	return array(
+		'adc_select_select_widget' => array(
+			'label' => t('Default'),
+			'field types' => array('adc_select_select'),
+		),
+	);
+}
+
+# This function actually displays the form in the admin page
+# you set up the form here
+function adc_backlink_field_widget_form(&$form,
+					&$form_state,
+					$field,
+					$instance,
+					$langcode,
+					$items,
+					$delta,
+					$element) {
+
+	// $field_name is the name of the field instance. This is the
+	// name that the administrator gives the field instance when
+	// attaching it to an entity.
+	$field_name = $instance['field_name'];
+
+
+	$element += array(
+		'#type' => 'fieldset',
+	);
+
+	$item =& $items[$delta];
+
+	$element['adc_select'] = array(
+		'#title' => t('Backlink Template Select'),
+		'#type' => 'select',
+		'#attributes' => array('id' => array('adc_select_select'), 'onchange' => array('adcSelectPopulate()')),
+		'#options' => _adc_backlink_generate_options(),
+		'#description' => t('Select the backlink template you\'d like to use'),
+		'#default_value' => isset($item['adc_select']) ? $item['adc_select'] : '',
+		);
+
+	$element['adc_select_textbox'] = array (
+		'#title' => t('Selected Template'),
+		'#type' => 'textarea',
+		'#attributes' => array('id' => array('adc_select_textbox')),
+		'#default_value' => isset($item['adc_select_textbox']) ? $item['adc_select_textbox'] : '',
+		'#rows' => 10,
+		);
+
+	_adc_backlink_javascript();
+	drupal_add_js(drupal_get_path('module', 'adc_backlink') . '/adc_backlink.js');
+
+	return $element;
+
+}
+
+# null returns in this function are are "escape hatches" to stop the script from
+# running on pages it shouldn't.
+function adc_backlink_field_prepare_view($entity_type, $entities, $field, $instances, $langcode, &$items) {
+
+	if(empty($items)) return null;
+
+	$currentPath = current_path();
+
+
+	if(strpos($currentPath, 'taxonomy') !== false) return null;
+
+	if(drupal_get_path_alias($currentPath) === 'home') return null;
+
+	# strip off "node/"
+	$currentPath = substr($currentPath, 5);
+
+	$toChange = &$items[$currentPath][0]['adc_select_textbox'];
+
+	$current_node = node_load($currentPath);
+
+	if(node_type_get_name($current_node) !== "Accident Report") return null;
+
+	# escape sequence in case of error
+	if($current_node == FALSE) return "";
+	
+	if(!property_exists($current_node, 'field_county') && !property_exists($current_node, 'field_dma')) return null;
+	
+	# grab county and DMA from AR
+	if(isset($current_node->field_county['und'])) {
+
+		$current_county = $current_node->field_county['und'][0]['target_id'];
+	} else {
+		$current_county = 0;
+	}
+
+	if(isset($current_node->field_dma['und'])) {
+
+		$current_dma = $current_node->field_dma['und'][0]['target_id'];
+	} else {
+		return null;
+	}
+	#dpm($items);
+
+	if($items == null) return null;	
+	if(reset($items) == null) return null;
+
+	if($items[$currentPath][0]['adc_select_textbox'] == NULL) return null;
+
+	# Unwrap items array
+	$items = reset($items);
+
+
+	if(!isset($items[0])) return null;
+	if($items[0]['adc_select_textbox'] === '') return null;
+	
+	$text = $items[0]['adc_select_textbox'];
+
+	# build query
+	# ONLY UTILIZES FIRST VALUE OF QUERY RESULT
+	$countyQuery = new EntityFieldQuery();
+
+	# first, check to see if there's an ad for the specific county
+	$countyQuery->entityCondition('entity_type', 'node')
+         ->entityCondition('bundle', 'ad')
+         ->propertyCondition('status', NODE_PUBLISHED)
+         ->fieldCondition('field_county', 'target_id', array($current_county), '=');	
+
+	$result = $countyQuery->execute();
+
+	if(empty($result)) {
+
+		# Nothing is found, look for an ad that matches the DMA instead
+
+		$dmaQuery = new EntityFieldQuery();
+		$dmaQuery->entityCondition('entity_type', 'node')
+		    ->entityCondition('bundle', 'ad')
+		    ->propertyCondition('status', NODE_PUBLISHED)
+		    ->fieldCondition('field_dma', 'target_id', array($current_dma), '=');
+
+		 $result = $dmaQuery->execute();
+		#drupal_set_message("Used DMA Query");
+	}
+  
+    	$adNodeId = reset($result['node']);
+
+    	$adNode = node_load($adNodeId->nid);
+
+
+	if(array_key_exists('und', $adNode->field_url_mappings)) {
+    		$filterString = $adNode->field_url_mappings['und']['0']['value'];
+    	} else {
+		$filterString = "";
+	}
+
+	if($filterString === "") {
+                $items[$currentPath][0]['adc_select_textbox'] = $text;
+                return null;
+        }
+
+
+	#Now, lets explode the string
+
+    	$newlinesFiltered = explode("\n", $filterString);
+	
+
+	# $tokens contains key-value pairs mapping keywords to HTML
+	# anchor tags.
+
+    	$tokens = array();
+
+	for($i = 0; $i < count($newlinesFiltered); $i++) {
+
+            $tmpLine = $newlinesFiltered[$i];
+
+            $tmpLine = explode("|", $tmpLine);
+
+
+            $tokens[$tmpLine[0]] = $tmpLine[1];
+    }
+
+    # Pattern for replacement will be based on a token like
+    # [link:dallas] - /\[link:(.*?)\]/ 
+
+    $matches = array();
+
+    preg_match_all('/\[link:(.*?)\]/', $text, $matches);
+
+    array_shift($matches);
+
+    for($i = 0; $i < count($matches[0]); $i++) {
+            $internal = $matches[0][$i];
+
+            $replacement = $tokens[$internal];
+
+            $text = str_replace("[link:$internal]", $replacement, $text);
+    }
+
+	$items[$currentPath][0]['adc_select_textbox'] = $text;
+
+}
+
+
+# Tell drupal what to do if fields are empty
+function adc_backlink_field_is_empty($item, $field) {
+
+	#ignoring
+	return false;
+
+}
+
+
+# This function tells drupal how to display our data
+function adc_backlink_field_formatter_info() {
+	return array(
+		'adc_select_select_formatter' => array(
+			'label' => t('Default'),
+			'field types' => array('adc_select_select'),
+		),
+	);
+
+}
+
+# actual heavy lifting for display done here
+function adc_backlink_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+
+	$element = array();
+
+	foreach($items as $delta => $item) {
+		$element[$delta] = _adc_backlink_format_field($item);		
+
+	}
+
+	return $element;
+
+}
+
+function _adc_backlink_format_field($item) {
+
+	$element = array(
+		'#type' => 'container',
+		'#attributes' => array( 'class' => array('field-item')),
+	);
+
+
+	$element['adc_select_textbox'] = array(
+		'label' => array(
+			'#type' => 'container',
+			'#attributes' => array( 'class' => array('field-label')),
+			'text' => array(
+	//			'#markup' => t(' '),
+			),
+		),
+		'item' => array(
+			'#type' => 'container',
+			'#attributes' => array( 'class' => array('field-item')),
+			'text' => array(
+				'#markup' => $item['adc_select_textbox'],
+			),
+		),
+	);
+
+	return $element;
+
+}
+
+
+# generate select list content
+function _adc_backlink_generate_options() {
+
+	$backlinks = entity_load_multiple_by_name("backlink");
+
+	$options = array(0 => "Select Template");
+
+	drupal_add_js("backlink_templates = {};", 'inline');
+	drupal_add_js("console.log('JS loaded');", 'inline');
+
+	$i = 0;
+
+	foreach($backlinks as $bklnk) {
+
+		$id = $bklnk->id;
+		$title = $bklnk->title;
+
+		$body = $bklnk->field_body['und'][0]['value'];
+		$body = htmlentities($body, ENT_QUOTES);
+	
+		$body = str_replace(array("\r", "\n"), " CRLF ", $body);
+		
+		$options[$id] = "$title";
+		
+		drupal_add_js("backlink_templates[$id] = \"$body\";", 'inline');
+		
+		$i++;
+
+	}
+	return $options;
+}

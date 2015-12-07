@@ -1,0 +1,15 @@
+<?php
+
+function adc_backlink_field_schema($field) {
+
+
+  $columns = array(
+	'adc_select' => array('type' => 'text', 'length' => 100000, 'not null' => false,),
+	'adc_select_textbox' => array('type' => 'text', 'length' => 100000, 'not null' => false,),);
+
+
+  return array(
+		'columns' => $columns,
+		'indexes' => array(),);
+}
+?> 

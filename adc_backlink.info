@@ -1,0 +1,3 @@
+name = ADC Backlink Module
+description = Provides a select list to be populated with items. The items will be based on our backlink filtering system.
+core = 7.x
