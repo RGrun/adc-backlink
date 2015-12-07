@@ -16,3 +16,7 @@ the select list. Once the user selects a template they want to use, the module's
 the user can edit the template in any way they want (without affecting the original template). Once the user hits "save" on the page they're working on, the module
 looks up the URL corresponding to a partner's website (based on another page field relating to a geographic location) and substitutes it for the token when the
 page renders for the end user.
+
+### Note
+
+GitHub reports this repo as being 100% JavaScript. It is not; most of the module itself is PHP code in the .module file.
